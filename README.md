@@ -1,31 +1,63 @@
-This repository implements a downscaling method to generate high-resolution NDVI maps using MODIS NDVI and Landsat-derived predictors via the XGBoost algorithm. The approach is based on the method from the paper:
+🛰️ NDVI Downscaling with XGBoost (Thanh Hóa, Vietnam)
+This repository demonstrates a machine learning-based approach to downscale MODIS NDVI to Landsat resolution using XGBoost. The implementation is adapted from:
 
 Robinson et al. (2019) - Fusing MODIS with Landsat 8 data to downscale weekly normalized difference vegetation index estimates for central Great Basin rangelands, USA
 
-🌏 Study Area
+📍 Study Area
 Location: Thanh Hóa Province, Vietnam
 
-Period: [Specify your MODIS/Landsat date range]
+MODIS NDVI resolution: 250m
 
-Target: Enhance spatial resolution of MODIS NDVI from ~250m to Landsat resolution (~30m)
+Target NDVI resolution: 30m (Landsat scale)
 
-📦 Input Data
-MODIS NDVI
+📂 Input Data
 
-Landsat 8 derived indices: EVI, SAVI, NBR, DEM, Slope
+Source	Description
+MODIS	NDVI weekly composite (low resolution)
+Landsat 8	Spectral indices: EVI, SAVI, NBR
+Terrain	DEM and Slope
+Texture	GLCM features of EVI/SAVI/NBR (entropy, variance, etc.)
+Training CSV	5,000 sample points extracted via Google Earth Engine
+All raster layers were exported from Google Earth Engine and used as model inputs.
 
-GLCM texture metrics from EVI/SAVI/NBR (variance, entropy, etc.)
+🧠 Methodology (Python workflow)
+🧪 1. Prepare training data
+Load .csv exported from GEE (XGBoost_Training_Texture_ThanhHoa.csv)
 
-🧠 Method
-Extract training points (MODIS NDVI + Landsat predictors) in Google Earth Engine
+Remove unnecessary columns and filter useful features
 
-Train an XGBoost regression model on 5,000 samples
+Split into training and testing sets (80/20)
 
-Apply the model to full-resolution predictors to generate downscaled NDVI
+🤖 2. Train XGBoost model
+Use xgboost.XGBRegressor with optimized parameters (max_depth, n_estimators)
 
-Compare results with MODIS NDVI
+Evaluate with RMSE and R²
+
+📉 3. Visualize model performance
+Histogram of predicted vs actual NDVI
+
+Scatter plot of test prediction
+
+🗺️ 4. Predict NDVI from raster inputs
+Load full-size raster input (ThanhHoa_XGBoostInputs.tif)
+
+Reshape bands to (pixels, features)
+
+Predict NDVI and reshape to original raster size
+
+💾 5. Export predicted NDVI
+Save output NDVI to GeoTIFF (NDVI_XGBoost_Predicted.tif) using rasterio
+
+📊 6. Compare MODIS vs Predicted NDVI
+Load original MODIS NDVI (NDVI_MODIS.tif)
+
+Plot both rasters side-by-side using matplotlib
 
 🛠️ Technologies
-Google Earth Engine (data preprocessing)
+Python, XGBoost, Pandas, Scikit-learn
 
-Python, XGBoost, Rasterio, Matplotlib, Seaborn, Scikit-learn
+Rasterio: Raster data reading/writing
+
+Matplotlib, Seaborn: Visualization
+
+
