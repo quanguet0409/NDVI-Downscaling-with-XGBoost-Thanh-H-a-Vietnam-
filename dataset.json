@@ -1,0 +1,117 @@
+// ===== Tải ranh giới tỉnh Thanh Hóa =====
+var thanhHoa = ee.FeatureCollection('projects/ee-hanoi688/assets/THOA');
+Map.centerObject(thanhHoa, 8);
+
+// ===== MODIS NDVI (250m) =====
+var modis = ee.ImageCollection('MODIS/006/MOD13Q1')
+  .filterBounds(thanhHoa)
+  .filterDate('2021-01-01', '2021-12-31')
+  .select('NDVI')
+  .mean()
+  .multiply(0.0001)
+  .reproject({crs: 'EPSG:4326', scale: 250})
+  .clip(thanhHoa)
+  .rename('NDVI_MODIS');
+
+// ===== LANDSAT 8 Surface Reflectance =====
+var landsat = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+  .filterBounds(thanhHoa)
+  .filterDate('2021-01-01', '2021-12-31')
+  .map(function(img){
+    var sr = img.select(['SR_B2','SR_B3','SR_B4','SR_B5','SR_B6','SR_B7'])
+      .multiply(0.0000275).add(-0.2);
+    return img.addBands(sr, null, true)
+      .set('system:time_start', img.get('system:time_start'));
+  });
+
+var l8 = landsat.median().clip(thanhHoa);
+
+// ===== NDVI từ Landsat (Target) =====
+var ndvi = l8.normalizedDifference(['SR_B5', 'SR_B4']).rename('NDVI_Landsat');
+
+// ===== Các chỉ số thực vật =====
+var nir = l8.select('SR_B5');
+var red = l8.select('SR_B4');
+var blue = l8.select('SR_B2');
+
+var evi = l8.expression(
+  '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))',
+  { NIR: nir, RED: red, BLUE: blue }
+).rename('EVI');
+
+var savi = l8.expression(
+  '((NIR - RED) / (NIR + RED + 0.5)) * 1.5',
+  { NIR: nir, RED: red }
+).rename('SAVI');
+
+var nbr = l8.normalizedDifference(['SR_B5', 'SR_B7']).rename('NBR');
+
+// ===== DEM và độ dốc =====
+var dem = ee.Image('USGS/SRTMGL1_003').clip(thanhHoa).rename('DEM');
+var slope = ee.Terrain.slope(dem).rename('Slope');
+
+// ===== Tính Texture Feature cho các chỉ số =====
+function texture(img, prefix) {
+  var glcm = img.multiply(255).toByte().glcmTexture({size: 3});
+  var bands = glcm.bandNames();
+  var renamed = bands.map(function(band) {
+    return ee.String(prefix).cat('_').cat(ee.String(band).split('_').get(1));
+  });
+  return glcm.select(bands, renamed);
+}
+
+var textures = ee.Image.cat([
+  texture(evi, 'EVI'),
+  texture(savi, 'SAVI'),
+  texture(nbr, 'NBR')
+]);
+
+var predictors = ee.Image.cat([
+  modis,
+  evi, savi, nbr,
+  dem, slope,
+  textures
+]).toFloat(); // Ép toàn bộ về Float32
+
+
+// ===== Thêm NDVI Landsat làm target =====
+var all = predictors.addBands(ndvi).toFloat();
+
+// ===== Tạo mẫu ngẫu nhiên để huấn luyện XGBoost =====
+var samples = all.sample({
+  region: thanhHoa,
+  scale: 30,
+  numPixels: 5000,
+  seed: 42,
+  geometries: true
+});
+
+// ===== Xuất CSV huấn luyện =====
+Export.table.toDrive({
+  collection: samples,
+  description: 'XGBoost_Training_Texture_ThanhHoa',
+  fileFormat: 'CSV'
+});
+
+
+Export.image.toAsset({
+  image: predictors,
+  description: 'Export_XGBoostInputs_ThanhHoa',
+  assetId: 'users/ee-hanoi688/ThanhHoa_XGBoostInputs_Full',
+  region: thanhHoa.geometry(), // hoặc geometry cụ thể
+  scale: 30,
+  crs: 'EPSG:4326',
+  maxPixels: 1e13
+});
+
+
+
+// ===== Hiển thị bản đồ =====
+Map.addLayer(l8, {bands: ['SR_B4', 'SR_B3', 'SR_B2'], min: 0.05, max: 0.4}, 'Landsat RGB');
+Map.addLayer(ndvi, {min: 0, max: 1, palette: ['white', 'green']}, 'NDVI Landsat (Target)');
+Map.addLayer(modis, {min: 0.1, max: 0.9, palette: ['white', 'darkgreen']}, 'NDVI MODIS');
+Map.addLayer(evi, {min: -1, max: 1, palette: ['purple', 'white', 'green']}, 'EVI');
+Map.addLayer(savi, {min: -1, max: 1, palette: ['white', 'yellow', 'darkgreen']}, 'SAVI');
+Map.addLayer(nbr, {min: -1, max: 1, palette: ['red', 'white', 'green']}, 'NBR');
+Map.addLayer(dem, {min: 0, max: 2000, palette: ['blue', 'white', 'brown']}, 'DEM');
+Map.addLayer(slope, {min: 0, max: 60, palette: ['white', 'gray', 'black']}, 'Slope');
